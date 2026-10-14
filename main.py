@@ -3,15 +3,14 @@ from discord.ext import commands, tasks
 import datetime
 import json
 import os
-import subprocess
 from flask import Flask
 from threading import Thread
 
-# --- Render 24/7 Web Server ---
+# --- Render 24/7 Web Server (Bot ko active rakhne ke liye) ---
 app = Flask('')
 @app.route('/')
 def home(): 
-    return "AFK System Hub Online!"
+    return "Discord Invite & Plan Validity Tracker is Online!"
 
 def run(): 
     app.run(host='0.0.0.0', port=8080)
@@ -24,18 +23,17 @@ intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
 intents.invites = True  
-bot = commands.Bot(command_prefix=r"\$", intents=intents)
+bot = commands.Bot(command_prefix=r"\$", intents=intents) # Syntax warning fix done
 
 # ⚙️ SETTINGS: Apne Server ki IDs yahan badlein
-ALLOWED_GUILD_ID = 1559826100153090080  # 👈 Apna Discord Server ID daalein
-ADMIN_CHANNEL_ID = 1559831974162473050  # 👈 Admin Notification Channel ID daalein
+ALLOWED_GUILD_ID = 1559826100153090080  # 👈 Apna Discord Server ID yahan daalein
+ADMIN_CHANNEL_ID = 1559831974162473050  # 👈 Admin Notification Channel ID yahan daalein
 DB_FILE = "database.json"
 MAX_USERS = 100
 
 invites_cache = {}
-active_processes = {}
 
-# --- JSON Database Management ---
+# --- Local File Database Systems ---
 def load_db():
     if not os.path.exists(DB_FILE): return {}
     with open(DB_FILE, 'r') as f:
@@ -54,31 +52,7 @@ def get_valid_days(invite_count):
     if invite_count >= 2: return 7
     return 0
 
-def start_minecraft_bot(user_id, server_ip):
-    stop_minecraft_bot(user_id)
-    bot_ign = f"AFK_{user_id[:6]}"
-    bot_password = f"Pass{user_id[:5]}!"
-    
-    try:
-        process = subprocess.Popen(
-            ["node", "index.js", server_ip, bot_ign, bot_password],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        active_processes[str(user_id)] = process
-        print(f"🚀 Started MC Client for User {user_id}")
-    except Exception as e:
-        print(f"❌ Subprocess failed: {e}")
-
-def stop_minecraft_bot(user_id):
-    uid = str(user_id)
-    if uid in active_processes:
-        process = active_processes[uid]
-        process.terminate()
-        del active_processes[uid]
-        print(f"🛑 Minecraft AFK Bot stopped for User {uid}")
-
-# --- Auto Invite Tracking ---
+# --- Auto Invite Tracking Events ---
 async def cache_server_invites():
     guild = bot.get_guild(ALLOWED_GUILD_ID)
     if guild:
@@ -93,11 +67,6 @@ async def on_ready():
     keep_alive()
     await cache_server_invites()
     check_expirations.start()
-    
-    db = load_db()
-    for uid, info in db.items():
-        if info.get("status") == "active":
-            start_minecraft_bot(uid, info["server_ip"])
 
 @bot.event
 async def on_invite_create(invite):
@@ -127,7 +96,7 @@ async def on_member_join(member):
         db[inviter_id]["total_invites"] += 1
         save_db(db)
 
-# --- ⏰ Expiry Loop ---
+# --- ⏰ Expiry Loop (Har 1 minute me check karega aur aapko alert bhejega) ---
 @tasks.loop(minutes=1)
 async def check_expirations():
     await bot.wait_until_ready()
@@ -142,13 +111,13 @@ async def check_expirations():
             if now >= expiry_time:
                 db[user_id]["status"] = "expired"
                 changed = True
-                stop_minecraft_bot(user_id)
                 
+                # Admin Channel me exactly alert trigger hoga
                 if admin_channel:
                     embed = discord.Embed(title="⚠️ VALID DONE / ACCESS EXPIRED", color=discord.Color.red())
                     embed.add_field(name="User Name", value=f"**{info['username']}** (<@{user_id}>)", inline=False)
                     embed.add_field(name="Server IP", value=info["server_ip"], inline=True)
-                    embed.add_field(name="Status", value="🚫 OFFLINE / ACCESS REVOKED", inline=True)
+                    embed.add_field(name="Status", value=f"🛑 VAILD DONE USER NAME: {info['username']}", inline=False)
                     await admin_channel.send(embed=embed)
                     
     if changed: save_db(db)
@@ -157,7 +126,9 @@ def is_allowed_server():
     async def predicate(ctx): return ctx.guild and ctx.guild.id == ALLOWED_GUILD_ID
     return commands.check(predicate)
 
-# --- COMMANDS ---
+# --- USER COMMANDS ---
+
+# 1. \$claim ip: command
 @bot.command()
 @is_allowed_server()
 async def claim(ctx, *, ip: str = None):
@@ -177,9 +148,10 @@ async def claim(ctx, *, ip: str = None):
         await ctx.send(f"❌ {user.mention}, bot claim karne ke liye kam se kam 2 invites chahiye! Aapke paas abhi **{user_invites}** invites hain.")
         return
 
+    # 100 Active Users check limit
     active_count = sum(1 for u in db.values() if u.get("status") == "active")
     if active_count >= MAX_USERS:
-        await ctx.send("❌ Sorry! Slots full hain (100/100).")
+        await ctx.send("❌ Sorry! Hamaare paas abhi slots full hain (100/100). Please thoda wait karein.")
         return
 
     expiry_datetime = datetime.datetime.now() + datetime.timedelta(days=days)
@@ -189,13 +161,22 @@ async def claim(ctx, *, ip: str = None):
     db[user_id].update({"username": user.name, "server_ip": server_ip, "expiry_date": expiry_str, "status": "active"})
     save_db(db)
     
-    start_minecraft_bot(user_id, server_ip)
-    
     success_msg = "✅ Successfully bot request sended pls wait and check bot information."
     await ctx.send(f"{user.mention} {success_msg}")
     try: await user.send(success_msg)
     except: pass
 
+    # Admin Panel Request Logger
+    admin_channel = bot.get_channel(ADMIN_CHANNEL_ID)
+    if admin_channel:
+        embed = discord.Embed(title="🤖 New Plan Activation", color=discord.Color.green())
+        embed.add_field(name="Member Name", value=f"{user.name} ({user.mention})", inline=True)
+        embed.add_field(name="Total Invites Verified", value=str(user_invites), inline=True)
+        embed.add_field(name="Valid Duration", value=f"{days} Days", inline=True)
+        embed.add_field(name="Target Server IP", value=server_ip, inline=False)
+        await admin_channel.send(embed=embed)
+
+# 2. \$upgrade command
 @bot.command()
 @is_allowed_server()
 async def upgrade(ctx, *, details: str = None):
@@ -219,6 +200,7 @@ async def upgrade(ctx, *, details: str = None):
         embed.add_field(name="Features", value=details, inline=False)
         await admin_channel.send(embed=embed)
 
+# 3. Admin Custom DM command (\$dm @user embed me message)
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def dm(ctx, member: discord.Member, *, message_content: str):
