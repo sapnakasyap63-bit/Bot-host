@@ -275,3 +275,102 @@ async def checkinvites(ctx):
     await ctx.send(embed=embed)
 
 @bot.command()
+
+@commands.has_permissions(administrator=True)
+@is_allowed_server()
+async def setinvite(ctx, member: discord.Member, count: int):
+    if count < 0:
+        await ctx.send("❌ Invite count cannot be negative.")
+        return
+
+    db = load_db()
+    user_id = str(member.id)
+
+    if user_id not in db:
+        db[user_id] = {
+            "username": member.name,
+            "server_ip": "None",
+            "expiry_date": "None",
+            "status": "none",
+            "total_invites": 0
+        }
+
+    db[user_id]["username"] = member.name
+    db[user_id]["total_invites"] = count
+    save_db(db)
+
+    await ctx.send(
+        f"✅ Updated {member.mention}'s invite count to **{count}**."
+    )
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+@is_allowed_server()
+async def userstatus(ctx, member: discord.Member):
+    db = load_db()
+    info = db.get(str(member.id))
+
+    if not info:
+        await ctx.send("❌ No database record found for this member.")
+        return
+
+    embed = discord.Embed(
+        title="👤 User Plan Details",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="Member", value=member.mention, inline=False)
+    embed.add_field(
+        name="Total Invites",
+        value=str(info.get("total_invites", 0)),
+        inline=True
+    )
+    embed.add_field(
+        name="Server IP",
+        value=info.get("server_ip", "None"),
+        inline=True
+    )
+    embed.add_field(
+        name="Status",
+        value=info.get("status", "none"),
+        inline=True
+    )
+    embed.add_field(
+        name="Expiry Date",
+        value=info.get("expiry_date", "None"),
+        inline=False
+    )
+
+    await ctx.send(embed=embed)
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+@is_allowed_server()
+async def dm(ctx, member: discord.Member, *, message: str):
+    embed = discord.Embed(
+        title="📩 Message from Server Administration",
+        description=message,
+        color=discord.Color.gold()
+    )
+    embed.set_footer(text=f"Sent by {ctx.author}")
+
+    try:
+        await member.send(embed=embed)
+        await ctx.send(f"✅ Message sent to {member.mention}.")
+    except discord.Forbidden:
+        await ctx.send(
+            "❌ I couldn't DM this member. Their privacy settings may block the bot."
+        )
+
+
+# --- BOT STARTUP ---
+if __name__ == "__main__":
+    token = os.getenv("DISCORD_TOKEN")
+
+    if not token:
+        raise RuntimeError(
+            "DISCORD_TOKEN is missing from the hosting environment."
+        )
+
+    bot.run(token)
