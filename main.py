@@ -272,3 +272,6 @@ async def checkinvites(ctx):
             value=f"• Invites Count: `{info.get('total_invites', 0)}` \n• Status: `{info.get('status', 'none')}`",
             inline=True
         )
+    await ctx.send(embed=embed)
+
+@bot.command()
